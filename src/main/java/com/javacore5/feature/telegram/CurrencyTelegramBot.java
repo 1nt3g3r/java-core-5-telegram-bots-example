@@ -2,8 +2,8 @@ package com.javacore5.feature.telegram;
 
 import com.javacore5.feature.currency.CurrencyService;
 import com.javacore5.feature.currency.PrivatBankCurrencyService;
-import com.javacore5.feature.currency.dto.Currency;
-import com.javacore5.feature.telegram.command.HelpCommand;
+import com.javacore5.feature.fsm.StateMachine;
+import com.javacore5.feature.fsm.StateMachineListener;
 import com.javacore5.feature.telegram.command.StartCommand;
 import com.javacore5.feature.ui.PrettyPrintCurrencyService;
 import org.telegram.telegrambots.extensions.bots.commandbot.TelegramLongPollingCommandBot;
@@ -11,53 +11,38 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
 public class CurrencyTelegramBot extends TelegramLongPollingCommandBot {
-    private CurrencyService currencyService;
-    private PrettyPrintCurrencyService prettyPrintCurrencyService;
+    private Map<String, StateMachine> stateMachines;
+    private ScheduledExecutorService scheduledExecutorService;
 
     public CurrencyTelegramBot() {
-        currencyService = new PrivatBankCurrencyService();
-        prettyPrintCurrencyService = new PrettyPrintCurrencyService();
-
         register(new StartCommand());
-        register(new HelpCommand());
+
+        stateMachines = new ConcurrentHashMap<>();
+        scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
     }
 
     @Override
     public void processNonCommandUpdate(Update update) {
-        if (update.hasCallbackQuery()) {
-            String callbackQuery = update.getCallbackQuery().getData();
-
-            Currency currency = Currency.valueOf(callbackQuery);
-
-            double currencyRate = currencyService.getRate(currency);
-
-            String prettyText = prettyPrintCurrencyService.convert(currencyRate, currency);
-
-            SendMessage responseMessage = new SendMessage();
-            responseMessage.setText(prettyText);
-            long chatId = update.getCallbackQuery().getMessage().getChatId();
-            responseMessage.setChatId(Long.toString(chatId));
-            try {
-                execute(responseMessage);
-            } catch (TelegramApiException e) {
-                e.printStackTrace();
-            }
-        }
-
         if (update.hasMessage()) {
-            String message = update.getMessage().getText();
+            String chatId = Long.toString(update.getMessage().getChatId());
 
-            String responseText = "Ви написали: " + message;
+            if (!stateMachines.containsKey(chatId)) {
+                StateMachine fsm = new StateMachine();
 
-            SendMessage sendMessage = new SendMessage();
-            sendMessage.setText(responseText);
-            sendMessage.setChatId(Long.toString(update.getMessage().getChatId()));
-            try {
-                execute(sendMessage);
-            } catch (TelegramApiException e) {
-                e.printStackTrace();
+                fsm.addListener(new MessageListener(chatId));
+
+                stateMachines.put(chatId, fsm);
             }
+
+            String message = update.getMessage().getText();
+            stateMachines.get(chatId).handle(message);
         }
     }
 
@@ -69,5 +54,46 @@ public class CurrencyTelegramBot extends TelegramLongPollingCommandBot {
     @Override
     public String getBotToken() {
         return BotConstants.BOT_TOKEN;
+    }
+
+    private class MessageListener implements StateMachineListener {
+        private String chatId;
+
+        public MessageListener(String chatId) {
+            this.chatId = chatId;
+        }
+
+        @Override
+        public void onSwitchedToWaitForMessage() {
+            sendText("Напишите текст заметки");
+        }
+
+        @Override
+        public void onSwitchedToWaitForTime() {
+            sendText("Ок, принял. Через сколько секунд напомнить?");
+        }
+
+        @Override
+        public void onMessageAndTimeReceived(String message, int time) {
+            sendText("Заметка поставлена, секунд до срабатывания: " + time);
+
+            scheduledExecutorService.schedule(
+                    () -> sendText(message),
+                    time,
+                    TimeUnit.SECONDS
+            );
+        }
+
+        private void sendText(String text) {
+            SendMessage sendMessage = new SendMessage();
+            sendMessage.setText(text);
+            sendMessage.setChatId(chatId);
+
+            try {
+                execute(sendMessage);
+            } catch (TelegramApiException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }

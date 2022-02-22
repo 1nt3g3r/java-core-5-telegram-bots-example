@@ -27,23 +27,18 @@ public class StartCommand extends BotCommand {
 
     @Override
     public void execute(AbsSender absSender, User user, Chat chat, String[] arguments) {
-        String text = "Курс якої валюти ви хочете дізнатись:";
+        String text = "Привет! Я бот для напоминаний. Нажми на \"Создать напоминание\" для начала работы";
 
         SendMessage message = new SendMessage();
         message.setText(text);
         message.setChatId(Long.toString(chat.getId()));
 
-        List<InlineKeyboardButton> buttons = Stream.of(Currency.USD, Currency.EUR, Currency.RUR)
-                .map(Enum::name)
-                .map(it -> InlineKeyboardButton.builder().text(it).callbackData(it).build())
-                .collect(Collectors.toList());
-
-        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup
+        KeyboardButton createNotificationButton = KeyboardButton
                 .builder()
-                .keyboard(Collections.singleton(buttons))
+                .text("Создать напоминание")
                 .build();
-
-        message.setReplyMarkup(keyboard);
+        KeyboardRow row = new KeyboardRow(Collections.singletonList(createNotificationButton));
+        message.setReplyMarkup(ReplyKeyboardMarkup.builder().keyboardRow(row).build());
 
         try {
             absSender.execute(message);
